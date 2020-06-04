@@ -202,14 +202,12 @@ void buttonhandler(int sig, siginfo_t *si, void *ucontext)
 {
 	char button[2] = {'0' + si->si_value.sival_int & 0xff, '\0'};
 	sig = si->si_value.sival_int >> 8;
-    printf ("%d %ld\n", sig);
 	if (fork() == 0)
 	{
 		const Block *current;
 		for (int i = 0; i < LENGTH(blocks); i++)
 		{
 			current = blocks + i;
-		  printf ("signal %d %ld\n", current->signal);
             if (current->signal == sig)
 				break;
 		}
@@ -222,13 +220,6 @@ void buttonhandler(int sig, siginfo_t *si, void *ucontext)
 	getsigcmds(sig);
 	writestatus();
 }
-// void buttonhandler(int sig, siginfo_t *si, void *ucontext)
-// {
-// 	*button = '0' + si->si_value.sival_int & 0xff;
-// 	getsigcmds(si->si_value.sival_int >> 8);
-// 	writestatus();
-// }
-
 #endif
 
 void termhandler(int signum)
