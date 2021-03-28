@@ -13,6 +13,7 @@ typedef struct {
 	unsigned int interval;
 	unsigned int signal;
 } Block;
+char** last_updates;
 void sighandler(int num);
 void buttonhandler(int sig, siginfo_t *si, void *ucontext);
 void replace(char *str, char old, char new);
@@ -35,7 +36,6 @@ static Display *dpy;
 static int screen;
 static Window root;
 static char statusbar[LENGTH(blocks)][CMDLENGTH] = {0};
-static char button[] = "\0";
 static char statusstr[2][256];
 static int statusContinue = 1;
 static void (*writestatus) () = setroot;
@@ -62,7 +62,7 @@ void remove_all(char *str, char to_remove) {
 }
 
 //opens process *cmd and stores output in *output
-void getcmd(const Block *block, char *output)
+void getcmd(const Block *block, char* last_update , char *output)
 {
 	if (block->signal)
 	{
@@ -71,28 +71,22 @@ void getcmd(const Block *block, char *output)
 	}
 	strcpy(output, block->icon);
 	char *cmd = block->command;
-	FILE *cmdf;
-	if (*button)
-	{
-		setenv("BUTTON", button, 1);
-		cmdf = popen(cmd,"r");
-		*button = '\0';
-		unsetenv("BUTTON");
-	}
-	else
-	{
-		cmdf = popen(cmd,"r");
-	}
+	FILE *cmdf = popen(cmd,"r");
 	if (!cmdf)
 		return;
 	char c;
 	int i = strlen(block->icon);
 	fgets(output+i, CMDLENGTH-(strlen(delim)+1), cmdf);
 	remove_all(output, '\n');
+    if(i == strlen(output))
+		strcpy(output+i, last_update);
+    else
+		strcpy(last_update, output+i);
+
 	i = strlen(output);
-    if ((i > 0 && block != &blocks[LENGTH(blocks) - 1]))
-        strcat(output, delim);
-    i+=strlen(delim);
+	if ((i > 0 && block != &blocks[LENGTH(blocks) - 1]))
+		strcat(output, delim);
+	i+=strlen(delim);
 	output[i++] = '\0';
 	pclose(cmdf);
 }
@@ -104,7 +98,7 @@ void getcmds(int time)
 	{
 		current = blocks + i;
 		if ((current->interval != 0 && time % current->interval == 0) || time == -1)
-			getcmd(current,statusbar[i]);
+            getcmd(current,last_updates[i],statusbar[i]);
 	}
 }
 
@@ -116,13 +110,17 @@ void getsigcmds(int signal)
 	{
 		current = blocks + i;
 		if (current->signal == signal)
-			getcmd(current,statusbar[i]);
-	}
+            getcmd(current,last_updates[i],statusbar[i]);
+    }
 }
 
 void setupsignals()
 {
 	struct sigaction sa;
+
+	for(int i = SIGRTMIN; i <= SIGRTMAX; i++)
+		signal(i, SIG_IGN);
+
 	for(int i = 0; i < LENGTH(blocks); i++)
 	{
 		if (blocks[i].signal > 0)
@@ -134,7 +132,11 @@ void setupsignals()
 	sa.sa_sigaction = buttonhandler;
 	sa.sa_flags = SA_SIGINFO;
 	sigaction(SIGUSR1, &sa, NULL);
-	signal(SIGCHLD, SIG_IGN);
+	struct sigaction sigchld_action = {
+  		.sa_handler = SIG_DFL,
+  		.sa_flags = SA_NOCLDWAIT
+	};
+	sigaction(SIGCHLD, &sigchld_action, NULL);
 
 }
 #endif
@@ -146,7 +148,7 @@ int getstatus(char *str, char *last)
     for(int i = 0; i < LENGTH(blocks); i++) {
 		strcat(str, statusbar[i]);
         if (i == LENGTH(blocks) - 1)
-            strcat(str, "\0");
+            strcat(str, " ");
     }
 	str[strlen(str)-1] = '\0';
 	return strcmp(str, last);//0 if they are the same
@@ -180,6 +182,11 @@ void statusloop()
 #ifndef __OpenBSD__
 	setupsignals();
 #endif
+    last_updates = malloc(sizeof(char*) * LENGTH(blocks));
+    for(int i = 0; i < LENGTH(blocks); i++) {
+        last_updates[i] = malloc(sizeof(char) * CMDLENGTH);
+        strcpy(last_updates[i],"");
+    }
 	int i = 0;
 	getcmds(-1);
 	while(statusContinue)
@@ -201,6 +208,7 @@ void sighandler(int signum)
 void buttonhandler(int sig, siginfo_t *si, void *ucontext)
 {
 	char button[2] = {'0' + si->si_value.sival_int & 0xff, '\0'};
+	pid_t process_id = getpid();
 	sig = si->si_value.sival_int >> 8;
 	if (fork() == 0)
 	{
@@ -208,22 +216,27 @@ void buttonhandler(int sig, siginfo_t *si, void *ucontext)
 		for (int i = 0; i < LENGTH(blocks); i++)
 		{
 			current = blocks + i;
-            if (current->signal == sig)
+			if (current->signal == sig)
 				break;
 		}
-		char *command[] = { "/bin/sh", "-c", current->command, NULL };
+		char shcmd[1024];
+		sprintf(shcmd,"%s && kill -%d %d",current->command, current->signal+34,process_id);
+		char *command[] = { "/bin/sh", "-c", shcmd, NULL };
 		setenv("BLOCK_BUTTON", button, 1);
 		setsid();
 		execvp(command[0], command);
 		exit(EXIT_SUCCESS);
 	}
-	getsigcmds(sig);
-	writestatus();
 }
+
 #endif
 
 void termhandler(int signum)
 {
+    for(int i = 0; i < LENGTH(blocks); i++) {
+        free(last_updates[i]);
+    } 
+    free(last_updates);
 	statusContinue = 0;
 	exit(0);
 }
