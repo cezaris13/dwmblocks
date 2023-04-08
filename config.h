@@ -9,4 +9,4 @@ static const Block blocks[] = {
     {" ","$HOME/.config/dwm/scripts/dwm_specific/./bar.sh date",1,21},
 };
 //sets delimeter between status commands. NULL character ('\0') means no delimeter.
-static char *delim = "|";
+static char *delim = " | ";
